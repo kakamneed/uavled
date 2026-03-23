@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs -0 grep -l \"use std::\")",
+      "Bash(xargs -0 grep -n \"eprintln!\\\\|println!\\\\|print!\")",
+      "Bash(xargs -0 grep -n \"format!\")",
+      "Bash(xargs -0 grep -n \"Box<\")",
+      "Bash(xargs -0 grep -n \"\\\\.to_string\\(\\)\")",
+      "Bash(xargs -0 grep -n \"std::ptr\\\\|std::mem\\\\|std::slice\\\\|std::collections\")",
+      "Bash(xargs -0 grep -n \"panic!\\\\|assert!\\\\|unwrap_or_else\\\\|to_string\\(\\)\")",
+      "Read(//d/projects/mquickjs-rs/src/gc/**)"
+    ]
+  }
+}

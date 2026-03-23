@@ -1,0 +1,9 @@
+[build]
+# 替换为通用 RISC-V 目标
+target = "riscv32imc-unknown-none-elf"
+
+[target.riscv32imc-unknown-none-elf]
+runner = "espflash flash --monitor" # 保留烧录配置，无需手动指定链接脚本
+
+[unstable]
+build-std = ["core", "alloc", "panic_abort"] # 保留标准库构建配置
