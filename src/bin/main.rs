@@ -388,7 +388,7 @@ fn log_memory_stats(label: &str, ctx: &Context) {
 // =============================================
 // 标准库（prelude.js，固件内置，不通过 BLE 传输）
 // =============================================
-const PRELUDE_JS: &str = include_str!("../../../../esp/ledjs/ledjs/lib/prelude.js");
+const PRELUDE_JS: &str = include_str!("../../../ledjs/lib/prelude.js");
 
 // =============================================
 // 默认 JS 灯效脚本（彩虹效果）

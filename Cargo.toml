@@ -78,7 +78,7 @@ heapless = { version = "0.8.0", default-features = false }
 nb = "1.1.0"
 static_cell = { version = "2.1.0", features = ["nightly"] }
 portable-atomic = { version = "1.12.0", features = ["unsafe-assume-single-core"] }
-mquickjs-rs = { path = "D:/projects/mquickjs-rs", default-features = false }
+mquickjs-rs = { path = "../mquickjs-rs", default-features = false }
 esp-storage = { version = "0.4", features = ["nor-flash"] }
 embedded-storage = "0.3"
 
