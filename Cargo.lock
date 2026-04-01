@@ -605,6 +605,7 @@ dependencies = [
  "esp-metadata",
  "esp-riscv-rt",
  "esp32c3",
+ "esp32c6",
  "fugit",
  "instability",
  "log",
@@ -652,6 +653,7 @@ dependencies = [
  "darling 0.20.11",
  "document-features",
  "litrs 0.4.2",
+ "object",
  "proc-macro-crate",
  "proc-macro-error2",
  "proc-macro2",
@@ -749,6 +751,16 @@ name = "esp32c3"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df1bbcfa3ab2979171263db80804dabc38bdd45450c7eb775ee3f81d552cf0ba"
+dependencies = [
+ "critical-section",
+ "vcell",
+]
+
+[[package]]
+name = "esp32c6"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ff2a4e1d1b0cb2517af20766004b8e8fb4612043f0b0569703cc90d1880ede4"
 dependencies = [
  "critical-section",
  "vcell",
@@ -1007,6 +1019,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "object"
+version = "0.36.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62948e14d923ea95ea2c7c86c71013138b66525b86bdc08d2dcc262bdb497b87"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]

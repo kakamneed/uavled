@@ -101,12 +101,18 @@ impl OtaState {
                     }
                 }
 
-                // 检查序号连续性（支持断点续传：允许 seq=0 重新开始）
-                if seq == 0 {
-                    // 断点续传或重新开始
-                    println!("[OTA] seq=0，断点续传或重新开始");
+                // 检查序号连续性（支持断点续传）
+                // seq=0 时可能是首包或重新开始，需要根据 offset 判断
+                if seq == 0 && offset == 0 {
+                    // 重新开始，重置状态
+                    println!("[OTA] seq=0, offset=0，重新开始 OTA");
                     self.last_seq = 0xFFFF;
                     self.received = 0;
+                } else if seq == 0 && offset > 0 {
+                    // 断点续传，保持 received 不变，继续累加
+                    println!("[OTA] seq=0, offset={}，断点续传", offset);
+                    self.last_seq = 0xFFFF;
+                    // 不重置 received，保持从断点继续
                 } else if seq != self.last_seq.wrapping_add(1) {
                     println!("[OTA] seq 不连续: 期望={}, 收到={}", self.last_seq.wrapping_add(1), seq);
                     // 返回当前进度让发送方调整
@@ -226,6 +232,33 @@ pub fn erase_ota_partition(flash: &mut esp_storage::FlashStorage, offset: u32, s
 }
 
 /// 写入固件数据到 Flash
+pub fn erase_ota_range(
+    flash: &mut esp_storage::FlashStorage,
+    from_offset: u32,
+    to_offset: u32,
+) -> Result<(), &'static str> {
+    if to_offset <= from_offset {
+        return Ok(());
+    }
+
+    let sector_size = esp_storage::FlashStorage::SECTOR_SIZE;
+    let start = (from_offset / sector_size) * sector_size;
+    let end = ((to_offset + sector_size - 1) / sector_size) * sector_size;
+
+    let mut sector = start;
+    while sector < end {
+        let flash_from = OTA_PARTITION_OFFSET + sector;
+        let flash_to = flash_from + sector_size;
+        flash.erase(flash_from, flash_to).map_err(|_e| {
+            println!("[OTA] erase sector offset {} failed", sector);
+            "erase failed"
+        })?;
+        sector += sector_size;
+    }
+
+    Ok(())
+}
+
 pub fn write_firmware(flash: &mut esp_storage::FlashStorage, offset: u32, data: &[u8]) -> Result<(), &'static str> {
     let flash_offset = OTA_PARTITION_OFFSET + offset;
     flash.write(flash_offset, data)

@@ -14,6 +14,7 @@ const SCRIPT_BUF_SIZE: usize = 2048;
 
 // OTA 固件接收缓冲区（用于累积一个 Flash 写入单位）
 const OTA_BUF_SIZE: usize = 256;
+const FIRMWARE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 use bleps::{
     ad_structure::{
@@ -57,6 +58,17 @@ static mut OTA_STATE: ota::OtaState = ota::OtaState::new();
 static mut OTA_BUF: [u8; OTA_BUF_SIZE] = [0u8; OTA_BUF_SIZE];
 static mut OTA_BUF_LEN: usize = 0;
 
+fn value_to_u8(v: Option<Value>) -> u8 {
+    let n = v.and_then(|v| v.to_number_f32()).unwrap_or(0.0);
+    if n <= 0.0 {
+        0
+    } else if n >= 255.0 {
+        255
+    } else {
+        n as u8
+    }
+}
+
 // =============================================
 // JS 原生函数：LED 控制
 // =============================================
@@ -68,9 +80,9 @@ fn native_set_led(
     args: &[Value],
 ) -> Result<Value, String> {
     let idx = args.first().and_then(|v| v.to_i32()).unwrap_or(-1);
-    let r = args.get(1).and_then(|v| v.to_i32()).unwrap_or(0) as u8;
-    let g = args.get(2).and_then(|v| v.to_i32()).unwrap_or(0) as u8;
-    let b = args.get(3).and_then(|v| v.to_i32()).unwrap_or(0) as u8;
+    let r = value_to_u8(args.get(1).copied());
+    let g = value_to_u8(args.get(2).copied());
+    let b = value_to_u8(args.get(3).copied());
 
     if idx < 0 || idx >= NUM_LEDS as i32 {
         return Ok(Value::undefined());
@@ -101,9 +113,9 @@ fn native_set_all(
     _this: Value,
     args: &[Value],
 ) -> Result<Value, String> {
-    let r = args.first().and_then(|v| v.to_i32()).unwrap_or(0) as u8;
-    let g = args.get(1).and_then(|v| v.to_i32()).unwrap_or(0) as u8;
-    let b = args.get(2).and_then(|v| v.to_i32()).unwrap_or(0) as u8;
+    let r = value_to_u8(args.first().copied());
+    let g = value_to_u8(args.get(1).copied());
+    let b = value_to_u8(args.get(2).copied());
 
     unsafe {
         for i in 0..NUM_LEDS {
@@ -329,20 +341,10 @@ fn compile_update_script(ctx: &mut Context, script: &str) -> Result<FunctionByte
 
 unsafe fn flush_ota_buffer(
     flash: &mut Option<FlashStorage>,
-    flash_erased: &mut bool,
+    erased_up_to: &mut u32,
 ) -> Result<(), &'static str> {
     if OTA_BUF_LEN == 0 {
         return Ok(());
-    }
-
-    if !*flash_erased {
-        println!("[OTA] Erasing OTA partition...");
-        if flash.is_none() {
-            *flash = Some(FlashStorage::new());
-        }
-        let flash_storage = flash.as_mut().unwrap();
-        ota::erase_ota_partition(flash_storage, 0, ota::OTA_PARTITION_SIZE)?;
-        *flash_erased = true;
     }
 
     if flash.is_none() {
@@ -351,6 +353,12 @@ unsafe fn flush_ota_buffer(
 
     let flash_storage = flash.as_mut().unwrap();
     let write_offset = OTA_STATE.received.saturating_sub(OTA_BUF_LEN as u32);
+    let write_end = write_offset + OTA_BUF_LEN as u32;
+    if write_end > *erased_up_to {
+        ota::erase_ota_range(flash_storage, *erased_up_to, write_end)?;
+        let sector_size = FlashStorage::SECTOR_SIZE;
+        *erased_up_to = ((write_end + sector_size - 1) / sector_size) * sector_size;
+    }
     ota::write_firmware(flash_storage, write_offset, &OTA_BUF[..OTA_BUF_LEN])?;
     println!(
         "[OTA] Wrote {}/{} bytes",
@@ -574,10 +582,11 @@ fn main() -> ! {
 
 */
         static mut FLASH: Option<FlashStorage> = None;
-        static mut FLASH_ERASED: bool = false;
+        static mut FLASH_ERASED_UP_TO: u32 = 0;
         static mut OTA_RESP_LEN: usize = 0;
 
         let readback_value = b"UAVLED JS";
+        let version_value = FIRMWARE_VERSION.as_bytes();
 
         let mut script_read = |_offset: usize, data: &mut [u8]| {
             unsafe {
@@ -590,6 +599,12 @@ fn main() -> ! {
                 data[..len].copy_from_slice(&response[..len]);
                 len
             }
+        };
+
+        let mut version_read = |_offset: usize, data: &mut [u8]| {
+            let len = data.len().min(version_value.len());
+            data[..len].copy_from_slice(&version_value[..len]);
+            len
         };
 
         let mut script_write = |_offset: usize, data: &[u8]| {
@@ -620,22 +635,24 @@ fn main() -> ! {
                         }
 
                         if OTA_BUF_LEN >= OTA_BUF_SIZE {
-                            if let Err(e) = flush_ota_buffer(&mut FLASH, &mut FLASH_ERASED) {
+                            if let Err(e) = flush_ota_buffer(&mut FLASH, &mut FLASH_ERASED_UP_TO) {
                                 println!("[OTA] Write failed: {}", e);
                                 OTA_STATE.abort();
                                 OTA_BUF_LEN = 0;
+                                FLASH_ERASED_UP_TO = 0;
                             }
                         }
                     }
 
                     if cmd == ota::CMD_OTA_COMMIT {
-                        if let Err(e) = flush_ota_buffer(&mut FLASH, &mut FLASH_ERASED) {
+                        if let Err(e) = flush_ota_buffer(&mut FLASH, &mut FLASH_ERASED_UP_TO) {
                             println!("[OTA] Final write failed: {}", e);
                             OTA_STATE.abort();
                             OTA_BUF_LEN = 0;
+                            FLASH_ERASED_UP_TO = 0;
                             return;
                         }
-                        println!("[OTA] Commit accepted, rebooting");
+                        println!("[OTA] Commit accepted, rebooting...");
                         software_reset();
                     }
                 },
@@ -672,12 +689,19 @@ fn main() -> ! {
 
         gatt!([service {
             uuid: "a0e4f5e0-1234-4b56-9abc-def012345678",
-            characteristics: [characteristic {
-                name: "uavled_script",
-                uuid: "a0e4f5e1-1234-4b56-9abc-def012345678",
-                read: script_read,
-                write: script_write,
-            },],
+            characteristics: [
+                characteristic {
+                    name: "uavled_script",
+                    uuid: "a0e4f5e1-1234-4b56-9abc-def012345678",
+                    read: script_read,
+                    write: script_write,
+                },
+                characteristic {
+                    name: "uavled_version",
+                    uuid: "a0e4f5e2-1234-4b56-9abc-def012345678",
+                    read: version_read,
+                },
+            ],
         },]);
 
         let mut rng = bleps::no_rng::NoRng;
