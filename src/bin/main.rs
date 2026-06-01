@@ -4,10 +4,11 @@
 extern crate alloc;
 
 use alloc::{format, string::String};
+use esp_hal::analog::adc::{Adc, AdcConfig};
 
 // SK6812 RGBW reset 时间（加大余量防止溢出）
 const RES_US: u32 = 500;
-const NUM_LEDS: usize = 8;
+const NUM_LEDS: usize = 40;
 
 // BLE 脚本接收缓冲区（固件内置 prelude，只接收用户脚本，通常 < 500B）
 const SCRIPT_BUF_SIZE: usize = 2048;
@@ -27,7 +28,7 @@ use embedded_hal::delay::DelayNs;
 use esp_backtrace as _;
 use esp_hal::{
     delay::Delay,
-    gpio::Level,
+    gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
     rmt::{PulseCode, Rmt, TxChannel, TxChannelConfig, TxChannelCreator},
     rng::Rng,
     system::software_reset,
@@ -66,6 +67,38 @@ fn value_to_u8(v: Option<Value>) -> u8 {
         255
     } else {
         n as u8
+    }
+}
+
+fn battery_percentage_from_raw(raw: u16) -> u8 {
+    let battery_mv = ((raw as u32) * 1100 * 44) / (4095 * 10);
+    if battery_mv <= 3000 {
+        0
+    } else if battery_mv >= 4200 {
+        100
+    } else {
+        ((battery_mv - 3000) * 100 / 1200) as u8
+    }
+}
+
+fn render_battery_level(data: &mut [u8], percentage: u8) {
+    data.fill(0);
+
+    let lit = ((percentage as usize) * NUM_LEDS).div_ceil(100).min(NUM_LEDS);
+    let (r, g, b) = if percentage <= 20 {
+        (255, 0, 0)
+    } else if percentage <= 60 {
+        (255, 200, 0)
+    } else {
+        (0, 255, 0)
+    };
+
+    for i in 0..lit {
+        let o = i * BYTES_PER_LED;
+        data[o] = g;
+        data[o + 1] = r;
+        data[o + 2] = b;
+        data[o + 3] = 0;
     }
 }
 
@@ -140,8 +173,8 @@ fn native_set_all(
 
 const SK_T0H: u16 = 24;
 const SK_T0L: u16 = 72;
-const SK_T1H: u16 = 48;
-const SK_T1L: u16 = 48;
+const SK_T1H: u16 = 72;
+const SK_T1L: u16 = 24;
 
 // 额外发送 GUARD_LEDS 个全黑 LED 数据，防止信号噪声点亮后续 LED
 const GUARD_LEDS: usize = 4;
@@ -302,6 +335,8 @@ fn run_test(ctx: &mut Context, name: &str, script: &str, num_frames: usize,
 }
 
 fn run_js_tests(ctx: &mut Context, channel: &mut Option<LedChannel>, delay: &mut Delay) {
+    run_test(ctx, "battery-rainbow-only", TEST_RAINBOW, 120, channel, delay);
+    return;
     println!("=== JS 灯效自检开始 ===");
     run_test(ctx, "纯红",   TEST_RED,     180, channel, delay);
     run_test(ctx, "追逐",   TEST_CHASE,   180, channel, delay);
@@ -431,10 +466,45 @@ fn main() -> ! {
 
     let mut delay = Delay::new();
 
+    let mut _power_hold = Output::new(peripherals.GPIO1, Level::Low, OutputConfig::default());
+    _power_hold.set_high();
+
+    let mut _battery_measure_gate =
+        Output::new(peripherals.GPIO0, Level::Low, OutputConfig::default());
+    _battery_measure_gate.set_low();
+
+    let mut _led_strip_power =
+        Output::new(peripherals.GPIO4, Level::Low, OutputConfig::default());
+    _led_strip_power.set_high();
+
+    let mut _landing_light = Output::new(peripherals.GPIO7, Level::Low, OutputConfig::default());
+    _landing_light.set_low();
+
+    let mut _indicator_led =
+        Output::new(peripherals.GPIO18, Level::Low, OutputConfig::default());
+    _indicator_led.set_low();
+
+    let key1 = Input::new(
+        peripherals.GPIO5,
+        InputConfig::default().with_pull(Pull::Down),
+    );
+
+    let mut adc_config = AdcConfig::new();
+    let mut battery_adc_pin =
+        adc_config.enable_pin(
+            peripherals.GPIO2,
+            esp_hal::analog::adc::Attenuation::_11dB,
+        );
+    let mut battery_adc = Adc::new(peripherals.ADC1, adc_config);
+
+    println!(
+        "ESP32-C6 dual-arm bootstrap: ON_SIG latched, LED3528 power on, landing light off"
+    );
+
     // 初始化 RMT 外设（80MHz，1 tick = 12.5ns）
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
     let rmt_channel = rmt.channel0.configure(
-        peripherals.GPIO10,
+        peripherals.GPIO19,
         TxChannelConfig::default()
             .with_clk_divider(1)
             .with_idle_output_level(Level::Low)
@@ -443,7 +513,10 @@ fn main() -> ! {
     ).unwrap();
     let mut channel: Option<LedChannel> = Some(rmt_channel);
 
-    println!("SK6812 + JS + BLE 灯效引擎启动");
+    println!(
+        "ESP32-C6 + dual-arm mirrored LED engine startup (logical LEDs = {})",
+        NUM_LEDS
+    );
 
     // JS 灯效自检（wifi_init 之前，此时系统堆最干净）
     #[cfg(debug_assertions)]
@@ -470,6 +543,11 @@ fn main() -> ! {
         .expect("compile update() failed");
     let mut gc_frame_counter: u32 = 0;
     let mut stats_frame_counter: u32 = 0;
+    let mut key1_last_raw = key1.is_high();
+    let mut key1_stable_level = key1_last_raw;
+    let mut key1_stable_samples = 0u8;
+    let mut battery_display_frames = 0u16;
+    let mut battery_percentage = 0u8;
     log_memory_stats("startup", &ctx);
     println!("默认 JS 脚本加载成功");
 
@@ -750,7 +828,39 @@ fn main() -> ! {
                 disconnect_after_apply = false;
             }
 
-            if let Err(e) = ctx.execute(&call_update) {
+            let key1_raw = key1.is_high();
+            if key1_raw == key1_last_raw {
+                if key1_stable_samples < u8::MAX {
+                    key1_stable_samples += 1;
+                }
+            } else {
+                key1_last_raw = key1_raw;
+                key1_stable_samples = 0;
+            }
+
+            if key1_stable_samples >= 3 && key1_raw != key1_stable_level {
+                key1_stable_level = key1_raw;
+                if !key1_stable_level {
+                    _indicator_led.set_high();
+                    _battery_measure_gate.set_high();
+                    delay.delay_us(2000);
+                    let raw =
+                        nb::block!(battery_adc.read_oneshot(&mut battery_adc_pin)).unwrap_or(0);
+                    _battery_measure_gate.set_low();
+                    _indicator_led.set_low();
+
+                    battery_percentage = battery_percentage_from_raw(raw);
+                    battery_display_frames = 120;
+                    println!("KEY1 battery view -> raw={} pct={}%", raw, battery_percentage);
+                }
+            }
+
+            if battery_display_frames > 0 {
+                unsafe {
+                    render_battery_level(&mut LED_BUFFER, battery_percentage);
+                }
+                battery_display_frames -= 1;
+            } else if let Err(e) = ctx.execute(&call_update) {
                 println!("JS 错误: {}", e);
             }
             gc_frame_counter = gc_frame_counter.wrapping_add(1);

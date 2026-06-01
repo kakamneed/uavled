@@ -1,10 +1,13 @@
 # UAVLED
 
-ESP32-C3 LED 灯效控制器，支持通过 BLE 动态下发 JavaScript 灯效脚本和 OTA 无线固件升级。
+ESP32-C6 LED 灯效控制器，当前目标硬件为双机臂镜像 3528 灯带板，支持通过 BLE 动态下发 JavaScript 灯效脚本和 OTA 无线固件升级。
 
 ## 功能
 
-- SK6812 LED 灯带驱动（GRB 格式，GPIO10）
+- 双机臂镜像灯带驱动（当前逻辑 40 灯，参考仓板级代码使用数据脚 GPIO19）
+- 灯带供电门控 `LED3528_POWER_SIG`（GPIO4）
+- 开机保持 `ON_SIG`（GPIO1）
+- 降落灯默认关闭 `WLED_POWER_SIG`（GPIO7）
 - 内置 mquickjs JavaScript 引擎（no_std 移植版）
 - BLE GATT 服务，支持实时下发 JS 脚本切换灯效
 - **BLE OTA 无线固件升级**（通过 ledjs 工具）
@@ -14,7 +17,12 @@ ESP32-C3 LED 灯效控制器，支持通过 BLE 动态下发 JavaScript 灯效�
 
 | 引脚 | 功能 |
 |------|------|
-| GPIO10 | SK6812 数据线 |
+| GPIO19 | LED3528_SIG 数据线 |
+| GPIO18 | LED_BLUE_SIG 指示灯 |
+| GPIO4 | LED3528_POWER_SIG 灯带供电使能 |
+| GPIO1 | ON_SIG 开机保持 |
+| GPIO7 | WLED_POWER_SIG 降落灯控制 |
+| GPIO0 | BATM_SIG 电池测量门控 |
 
 ## 构建与烧录
 

@@ -5,20 +5,20 @@ use embedded_hal::delay::DelayNs;
 use esp_backtrace as _;
 use esp_hal::{
     delay::Delay,
-    gpio::Level,
+    gpio::{Level, Output, OutputConfig},
     rmt::{PulseCode, Rmt, TxChannel, TxChannelConfig, TxChannelCreator},
     time::Rate,
 };
 use esp_println::println;
 
-const NUM_LEDS: usize = 8;
+const NUM_LEDS: usize = 40;
 const RES_US: u32 = 500;
 
 // RMT @ 80MHz, 1 tick = 12.5ns
 const SK_T0H: u16 = 24; // 300ns
 const SK_T0L: u16 = 72; // 900ns
-const SK_T1H: u16 = 48; // 600ns
-const SK_T1L: u16 = 48; // 600ns
+const SK_T1H: u16 = 72; // 900ns
+const SK_T1L: u16 = 24; // 300ns
 
 // SK6812 RGBW: 32bit/LED (4 字节: G, R, B, W)
 const BYTES_PER_LED: usize = 4;
@@ -129,9 +129,27 @@ fn main() -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default());
     let mut delay = Delay::new();
 
+    let mut _power_hold = Output::new(peripherals.GPIO1, Level::Low, OutputConfig::default());
+    _power_hold.set_high();
+
+    let mut _battery_measure_gate =
+        Output::new(peripherals.GPIO0, Level::Low, OutputConfig::default());
+    _battery_measure_gate.set_low();
+
+    let mut _led_strip_power =
+        Output::new(peripherals.GPIO4, Level::Low, OutputConfig::default());
+    _led_strip_power.set_high();
+
+    let mut _landing_light = Output::new(peripherals.GPIO7, Level::Low, OutputConfig::default());
+    _landing_light.set_low();
+
+    let mut _indicator_led =
+        Output::new(peripherals.GPIO18, Level::Low, OutputConfig::default());
+    _indicator_led.set_low();
+
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
     let rmt_channel = rmt.channel0.configure(
-        peripherals.GPIO10,
+        peripherals.GPIO19,
         TxChannelConfig::default()
             .with_clk_divider(1)
             .with_idle_output_level(Level::Low)
@@ -140,7 +158,7 @@ fn main() -> ! {
     ).unwrap();
     let mut channel: Option<LedChannel> = Some(rmt_channel);
 
-    println!("=== RMT 纯硬件灯效测试 ===");
+    println!("=== RMT hardware LED test: ESP32-C6 dual-arm board ===");
 
     // ── 阶段0：单色诊断（每色2秒，确认 RMT 基本功能）──
     let diagnostics: [(&str, u8, u8, u8); 6] = [

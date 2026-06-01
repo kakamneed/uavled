@@ -12,7 +12,7 @@ name = "rmt_test"
 path = "./src/bin/rmt_test.rs"
 
 [features]
-default = ["chip-c3"]
+default = ["chip-c6"]
 chip-c3 = [
   "esp-backtrace/esp32c3",
   "esp-hal/esp32c3",
